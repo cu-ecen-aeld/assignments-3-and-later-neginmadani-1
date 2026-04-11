@@ -44,7 +44,7 @@ if [ ! -e ${OUTDIR}/linux-stable/arch/${ARCH}/boot/Image ]; then
 fi
 
 echo "Adding the Image in outdir"
-cp ${OUTDIR}/linux-stable/arch/${ARCH}/boot/Image ${OUTDIR}/
+cp ${OUTDIR}/linux-stable/arch/${ARCH}/boot/Image ${OUTDIR}/Image
 
 echo "Creating the staging directory for the root filesystem"
 cd "$OUTDIR"
@@ -61,7 +61,7 @@ mkdir -p rootfs/{bin,sbin,etc,proc,sys,dev,home,lib,lib64,usr/bin,usr/sbin,var/l
 cd "$OUTDIR"
 if [ ! -d "${OUTDIR}/busybox" ]
 then
-git clone https://busybox.net/git/busybox.git
+git clone https://github.com/mirror/busybox
     cd busybox
     git checkout ${BUSYBOX_VERSION}
     # CONFIGURE BUSYBOX
