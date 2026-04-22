@@ -8,10 +8,25 @@
 #include <sys/types.h>
 #include <syslog.h>
 #include <fcntl.h>
+#include <pthread.h>
+#include <sys/queue.h>
+#include <time.h>
 
 #define PORT 9000
 #define FILE_PATH "/var/tmp/aesdsocketdata"
 #define BUFFER_SIZE 1024
+
+typedef struct thread_node {
+	pthread_t tid;
+	int client_fd;
+	//int complete;
+	SLIST_ENTRY(thread_node) entries;
+} thread_node_t;
+
+SLIST_HEAD(thread_list, thread_node);
+struct thread_list threads = SLIST_HEAD_INITIALIZER(threads);
+
+pthread_mutex_t file_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 int server_fd = -1;
 volatile sig_atomic_t exit_flag = 0;
@@ -21,6 +36,101 @@ void handle_signal(int sig) {
 	// close socket here for accept() to return
 	close(server_fd);
     exit_flag = 1;
+}
+
+void *client_thread(void *arg) {
+	thread_node_t *node = (thread_node_t*)arg;
+    int client_fd = node->client_fd;
+	
+	char *packet = NULL;
+    size_t packet_size = 0;
+	char buffer[BUFFER_SIZE];
+	
+    while (1) {
+        ssize_t bytes = recv(client_fd, buffer, BUFFER_SIZE, 0);
+        if (bytes <= 0) break;
+
+        char *newbuf = realloc(packet, packet_size + bytes);
+		if (!newbuf) {
+			syslog(LOG_ERR, "realloc failed");
+			free(packet);
+			break;
+		}
+		
+        packet = newbuf;
+        memcpy(packet + packet_size, buffer, bytes);
+        packet_size += bytes;
+		
+        // check for newline
+        if (memchr(packet, '\n', packet_size)) {
+			
+			pthread_mutex_lock(&file_mutex);
+			
+            // append to file
+            int fd = open(FILE_PATH, O_CREAT | O_WRONLY | O_APPEND, 0644);
+            if (fd >= 0) {
+                write(fd, packet, packet_size);
+                close(fd);
+            }
+			
+			pthread_mutex_unlock(&file_mutex);
+			
+            free(packet);
+            packet = NULL;
+            packet_size = 0;
+
+            // send full file back
+            fd = open(FILE_PATH, O_RDONLY);
+            if (fd >= 0) {
+                ssize_t r;
+                while ((r = read(fd, buffer, BUFFER_SIZE)) > 0) {
+                    send(client_fd, buffer, r, 0);
+                }
+                close(fd);
+            }
+        }
+    }
+
+    free(packet);
+    close(client_fd);
+	
+	return NULL;
+}
+
+void* timestamp_thread(void *arg) {
+    (void)arg;
+
+	while (!exit_flag) {
+	
+		time_t now = time(NULL);
+		struct tm tm;
+		localtime_r(&now, &tm);
+	
+		char timebuf[128];
+		strftime(timebuf, sizeof(timebuf),
+				"%a, %d %b %Y %H:%M:%S %z", &tm);
+	
+		char output[256];
+		snprintf(output, sizeof(output),
+				"timestamp:%s\n", timebuf);
+	
+		pthread_mutex_lock(&file_mutex);
+	
+		int fd = open(FILE_PATH, O_CREAT | O_WRONLY | O_APPEND, 0644);
+		if (fd >= 0) {
+			write(fd, output, strlen(output));
+			close(fd);
+		}
+	
+		pthread_mutex_unlock(&file_mutex);
+	
+		for (int i = 0; i < 10; i++) {
+			if (exit_flag) break;
+			sleep(1);
+		}
+	}
+
+    return NULL;
 }
 
 int main(int argc, char *argv[]) {
@@ -34,7 +144,6 @@ int main(int argc, char *argv[]) {
     int client_fd;
     struct sockaddr_in server_addr, client_addr;
     socklen_t addr_len = sizeof(client_addr);
-    char buffer[BUFFER_SIZE];
 
     signal(SIGINT, handle_signal);
     signal(SIGTERM, handle_signal);
@@ -83,6 +192,9 @@ int main(int argc, char *argv[]) {
 		syslog(LOG_INFO, "Daemon started");
 	}
 	
+	pthread_t ts_thread;
+	pthread_create(&ts_thread, NULL, timestamp_thread, NULL);
+
     while (!exit_flag) {
         client_fd = accept(server_fd, (struct sockaddr*)&client_addr, &addr_len);
         if (client_fd < 0) {
@@ -96,54 +208,28 @@ int main(int argc, char *argv[]) {
         char ip[INET_ADDRSTRLEN];
         inet_ntop(AF_INET, &client_addr.sin_addr, ip, sizeof(ip));
         syslog(LOG_INFO, "Accepted connection from %s", ip);
+		
+		thread_node_t *node = malloc(sizeof(thread_node_t));
+		node->client_fd = client_fd;
+		//node->complete = 0;
+		
+		pthread_create(&node->tid, NULL, client_thread, node);
 
-        char *packet = NULL;
-        size_t packet_size = 0;
-
-        while (1) {
-            ssize_t bytes = recv(client_fd, buffer, BUFFER_SIZE, 0);
-            if (bytes <= 0) break;
-
-            char *newbuf = realloc(packet, packet_size + bytes);
-			if (!newbuf) {
-				syslog(LOG_ERR, "realloc failed");
-				free(packet);
-				break;
-			}
-            packet = newbuf;
-            memcpy(packet + packet_size, buffer, bytes);
-            packet_size += bytes;
-
-            // check for newline
-            if (memchr(packet, '\n', packet_size)) {
-                // append to file
-                int fd = open(FILE_PATH, O_CREAT | O_WRONLY | O_APPEND, 0644);
-                if (fd >= 0) {
-                    write(fd, packet, packet_size);
-                    close(fd);
-                }
-
-                free(packet);
-                packet = NULL;
-                packet_size = 0;
-
-                // send full file back
-                fd = open(FILE_PATH, O_RDONLY);
-                if (fd >= 0) {
-                    ssize_t r;
-                    while ((r = read(fd, buffer, BUFFER_SIZE)) > 0) {
-                        send(client_fd, buffer, r, 0);
-                    }
-                    close(fd);
-                }
-            }
-        }
-
-        free(packet);
-        close(client_fd);
-        syslog(LOG_INFO, "Closed connection from %s", ip);
+		// add to list (main thread only → no mutex needed)
+		SLIST_INSERT_HEAD(&threads, node, entries);
     }
 
+	thread_node_t *node;
+	while (!SLIST_EMPTY(&threads)) {
+		node = SLIST_FIRST(&threads);
+		SLIST_REMOVE_HEAD(&threads, entries);
+	
+		pthread_join(node->tid, NULL);
+		free(node);
+	}
+	
+	pthread_join(ts_thread, NULL);
+	
     unlink(FILE_PATH);
     closelog();
 
