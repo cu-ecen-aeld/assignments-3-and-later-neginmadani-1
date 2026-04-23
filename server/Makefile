@@ -2,7 +2,8 @@
 CC ?= $(CROSS_COMPILE)gcc
 
 # Compiler flags
-CFLAGS := -Wall -Werror -g
+CFLAGS ?= -Wall -Werror -g
+LDFLAGS ?=
 
 # Target executable
 TARGET := aesdsocket
@@ -16,11 +17,11 @@ OBJ := $(SRC:.c=.o)
 # Default target
 all: $(TARGET)
 
-# Build the executable
+# Link step
 $(TARGET): $(OBJ)
-	$(CC) $(CFLAGS) -o $(TARGET) $(OBJ)
+	$(CC) $(LDFLAGS) $(OBJ) -o $(TARGET)
 
-# Compile .c to .o
+# Compile step
 %.o: %.c
 	$(CC) $(CFLAGS) -c $< -o $@
 
