@@ -1,5 +1,5 @@
 # Compiler (supports cross-compilation)
-CC := $(CROSS_COMPILE)gcc
+CC ?= $(CROSS_COMPILE)gcc
 
 # Compiler flags
 CFLAGS := -Wall -Werror -g
