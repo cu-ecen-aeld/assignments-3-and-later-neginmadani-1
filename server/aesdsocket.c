@@ -69,7 +69,10 @@ void *client_thread(void *arg) {
             // append to file
             int fd = open(FILE_PATH, O_CREAT | O_WRONLY | O_APPEND, 0644);
             if (fd >= 0) {
-                write(fd, packet, packet_size);
+                ssize_t ret = write(fd, packet, packet_size);
+				if (ret == -1) {
+					perror("write");
+				}
                 close(fd);
             }
 			
@@ -118,7 +121,10 @@ void* timestamp_thread(void *arg) {
 	
 		int fd = open(FILE_PATH, O_CREAT | O_WRONLY | O_APPEND, 0644);
 		if (fd >= 0) {
-			write(fd, output, strlen(output));
+			ssize_t ret = write(fd, output, strlen(output));
+			if (ret == -1) {
+				perror("write");
+			}
 			close(fd);
 		}
 	
