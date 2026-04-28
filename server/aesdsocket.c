@@ -13,8 +13,13 @@
 #include <time.h>
 
 #define PORT 9000
-#define FILE_PATH "/var/tmp/aesdsocketdata"
 #define BUFFER_SIZE 1024
+
+#ifdef USE_AESD_CHAR_DEVICE
+#define FILE_PATH "/dev/aesdchar"
+#else
+#define FILE_PATH "/var/tmp/aesdsocketdata"
+#endif
 
 typedef struct thread_node {
 	pthread_t tid;
@@ -198,9 +203,11 @@ int main(int argc, char *argv[]) {
 		syslog(LOG_INFO, "Daemon started");
 	}
 	
-	//pthread_t ts_thread;
-	//pthread_create(&ts_thread, NULL, timestamp_thread, NULL);
-
+	#ifndef USE_AESD_CHAR_DEVICE
+	pthread_t ts_thread;
+	pthread_create(&ts_thread, NULL, timestamp_thread, NULL);
+	#endif
+	
     while (!exit_flag) {
         client_fd = accept(server_fd, (struct sockaddr*)&client_addr, &addr_len);
         if (client_fd < 0) {
@@ -234,9 +241,11 @@ int main(int argc, char *argv[]) {
 		free(node);
 	}
 	
-	//pthread_join(ts_thread, NULL);
+	#ifndef USE_AESD_CHAR_DEVICE
+	pthread_join(ts_thread, NULL);
+	unlink(FILE_PATH);
+	#endif
 	
-    unlink(FILE_PATH);
     closelog();
 
     return 0;
