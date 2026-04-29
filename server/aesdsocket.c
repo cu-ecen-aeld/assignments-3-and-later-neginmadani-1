@@ -15,6 +15,10 @@
 #define PORT 9000
 #define BUFFER_SIZE 1024
 
+#ifndef USE_AESD_CHAR_DEVICE
+#define USE_AESD_CHAR_DEVICE 1
+#endif
+
 #ifdef USE_AESD_CHAR_DEVICE
 #define FILE_PATH "/dev/aesdchar"
 #else
