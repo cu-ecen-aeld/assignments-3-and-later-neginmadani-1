@@ -30,6 +30,8 @@ struct aesd_buffer_entry *aesd_circular_buffer_find_entry_offset_for_fpos(struct
             size_t char_offset, size_t *entry_offset_byte_rtn )
 {
 	size_t read_bytes = 0;
+	size_t count;
+	size_t i;
     uint8_t cur_offst = buffer->out_offs;
 
     // buffer empty
@@ -38,12 +40,12 @@ struct aesd_buffer_entry *aesd_circular_buffer_find_entry_offset_for_fpos(struct
     }
 
     // determine number of valid entries
-    size_t count = buffer->full ?
+    count = buffer->full ?
         AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED :
         ((buffer->in_offs + AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED - buffer->out_offs)
          % AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED);
 
-    for (size_t i = 0; i < count; i++) {
+    for (i = 0; i < count; i++) {
 
         struct aesd_buffer_entry *entry = &buffer->entry[cur_offst];
 

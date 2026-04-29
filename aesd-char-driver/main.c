@@ -17,22 +17,24 @@
 #include <linux/types.h>
 #include <linux/cdev.h>
 #include <linux/fs.h> // file_operations
+#include <linux/slab.h>
 #include "aesdchar.h"
 int aesd_major =   0; // use dynamic major
 int aesd_minor =   0;
 
-MODULE_AUTHOR("Your Name Here"); /** TODO: fill in your name **/
+MODULE_AUTHOR("Negin Madani"); /** TODO: fill in your name **/
 MODULE_LICENSE("Dual BSD/GPL");
 
 struct aesd_dev aesd_device;
 
 int aesd_open(struct inode *inode, struct file *filp)
 {
+	struct aesd_dev *dev;
     PDEBUG("open");
     /**
      * TODO: handle open
      */
-	struct aesd_dev *dev = container_of(inode->i_cdev, struct aesd_dev, cdev);
+	dev	= container_of(inode->i_cdev, struct aesd_dev, cdev);
 	filp->private_data = dev;
 	
     return 0;
@@ -50,12 +52,14 @@ int aesd_release(struct inode *inode, struct file *filp)
 ssize_t aesd_read(struct file *filp, char __user *buf, size_t count,
                 loff_t *f_pos)
 {
+	struct aesd_dev *dev;
+	ssize_t total_copied;
     PDEBUG("read %zu bytes with offset %lld",count,*f_pos);
     /**
      * TODO: handle read
      */
-	struct aesd_dev *dev = filp->private_data;
-    ssize_t total_copied = 0;
+	dev	= filp->private_data;
+    total_copied = 0;
 	
 	/* Lock the device to protect circular buffer during read */
 	if (mutex_lock_interruptible(&dev->lock)) {
@@ -71,7 +75,9 @@ ssize_t aesd_read(struct file *filp, char __user *buf, size_t count,
      */
 	while (count > 0) {
         size_t entry_offset = 0;
-
+		size_t entry_remaining;
+		size_t to_copy;
+		
 		/*
          * Find which circular buffer entry corresponds to the current file position (*f_pos).
          *
@@ -101,8 +107,9 @@ ssize_t aesd_read(struct file *filp, char __user *buf, size_t count,
          * - limited by remaining data in this entry
          * - limited by remaining requested count
          */
-        size_t entry_remaining = entry->size - entry_offset;
-        size_t to_copy = (count < entry_remaining) ? count : entry_remaining;
+        
+		entry_remaining = entry->size - entry_offset;
+        to_copy = (count < entry_remaining) ? count : entry_remaining;
 
         /* Copy data from kernel space to user space buffer */
         if (copy_to_user(buf + total_copied, entry->buffptr + entry_offset, to_copy)) {	
@@ -118,7 +125,7 @@ ssize_t aesd_read(struct file *filp, char __user *buf, size_t count,
     }
 	
 	/* Release device lock */
-	mutex_unlock(dev->lock);
+	mutex_unlock(&dev->lock);
 	
 	/* Return number of bytes successfully copied (or error) */
     return total_copied;
@@ -128,14 +135,17 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
                 loff_t *f_pos)
 {
     ssize_t retval = count;
+	struct aesd_dev *dev;
+	char *kbuf;
+	size_t i;
     PDEBUG("write %zu bytes with offset %lld",count,*f_pos);
     /**
      * TODO: handle write
      */
-	struct aesd_dev *dev = filp->private_data;
+	dev	= filp->private_data;
 	
 	/* Temporary kernel buffer for incoming data */
-    char *kbuf = kmalloc(count, GFP_KERNEL);
+    kbuf = kmalloc(count, GFP_KERNEL);
     if (!kbuf)
         return -ENOMEM;
 	
@@ -152,8 +162,7 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
     }
 	
 	/* Process input byte-by-byte, building pending buffer and committing on newline */
-    for (size_t i = 0; i < count; i++) {
-
+    for (i = 0; i < count; i++) {
         char *new_buf;
 
         /* grow pending buffer */
@@ -167,7 +176,7 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
         }
 
         dev->pending.buffptr = new_buf;
-        dev->pending.buffptr[dev->pending.size] = kbuf[i];
+        ((char *)dev->pending.buffptr)[dev->pending.size] = kbuf[i];
         dev->pending.size++;
 
         /* if newline, commit entry to circular buffer */
@@ -248,6 +257,9 @@ int aesd_init_module(void)
 
 void aesd_cleanup_module(void)
 {
+	struct aesd_buffer_entry *entry;
+	uint8_t i;
+	
     dev_t devno = MKDEV(aesd_major, aesd_minor);
 
     cdev_del(&aesd_device.cdev);
@@ -255,9 +267,7 @@ void aesd_cleanup_module(void)
     /**
      * TODO: cleanup AESD specific poritions here as necessary
      */
-	struct aesd_buffer_entry *entry;
-	uint8_t i;
-	
+
 	for (i = 0; i < AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED; i++) {
 		entry = &aesd_device.circular_buffer.entry[i];
 		if (entry->buffptr) {
